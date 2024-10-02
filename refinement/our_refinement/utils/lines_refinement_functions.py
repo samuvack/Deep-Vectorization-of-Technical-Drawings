@@ -811,53 +811,69 @@ def reinit_excess_lines(cx, cy, width, length, excess_raster, patches_to_conside
                         min_width=1 / 8, initial_width=1, initial_length=1):
     r"""
     Algorithm is:
-    1. In each patch find the maximum value of excess raster
-       that is not already covered by some vector primitive
-    2. Find the patches for which this value is larger than `min_raster_to_fill`
-       and that are from `patches_to_consider`
-       -- only these patches need reinitialization
-    3. In every such patch find the line with the minimal width
-    4. Find the patches for which this value is lower than `min_width`
-         (the patch has invisible lines that are not already 'working')
-       and that need reinitialization
-       -- only these patches will be reinitialized
-    5. In every such patch put the line with the minimal width from step 3
-       into the position maximum excess raster from step 1
-       and reinitialize the length and width of this line
+    1. In each patch, find the maximum value of excess raster not covered by vector primitives.
+    2. Identify patches needing reinitialization based on `min_raster_to_fill` and `patches_to_consider`.
+    3. In each such patch, find the line with minimal width.
+    4. Reinitialize patches where this minimal width is less than `min_width`.
+    5. In each such patch, reposition the line with minimal width to the location of maximum excess raster and reset its length and width.
     """
     with torch.no_grad():
-        # 1. In each patch find the maximum value of excess raster
-        #    that is not already covered by some vector primitive
+        # 1. Find the maximum value of excess raster per patch
         max_excess, max_excess_id = torch.max(excess_raster, dim=-1)
-        # 2. Find the patches for which this value is larger than `min_raster_to_fill`
-        #    and that are from `patches_to_consider`
-        #    -- only these patches need reinitialization
-        patches_to_reinit = torch.tensor(patches_to_consider, dtype=torch.bool, device=cx.device)
+
+        # 2. Identify patches needing reinitialization
+        # Correct way to clone the tensor without shared memory
+        patches_to_reinit = patches_to_consider.clone().bool()
         patches_to_consider_to_reinit = max_excess >= min_raster_to_fill
-        patches_to_reinit.masked_scatter_(patches_to_reinit, patches_to_consider_to_reinit)
-        if patches_to_reinit.sum() == 0:
+
+        # Avoid in-place operation by creating a new tensor
+        patches_to_reinit = patches_to_reinit & patches_to_consider_to_reinit
+
+        if patches_to_reinit.sum().item() == 0:
             return
-        # 3. In every such patch find the line with the minimal width
-        min_lines_width, lines_to_reinit = torch.min(width[patches_to_reinit], dim=-1)
-        # 4. Find the patches for which this value is lower than `min_width`
-        #      (the patch has invisible lines that are not already 'working')
-        #    and that need reinitialization
-        #    -- only these patches will be reinitialized
+
+        # 3. Find the line with minimal width in each patch needing reinitialization
+        width_clone = width.clone()
+        min_lines_width, lines_to_reinit = torch.min(width_clone[patches_to_reinit], dim=-1)
+
+
+        print("patches_to_reinit:", patches_to_reinit)
+        print("patches_to_reinit.shape:", patches_to_reinit.shape)
+        print("min_lines_width:", min_lines_width)
+        print("lines_to_reinit:", lines_to_reinit)
+
+        # 4. Reinitialize patches where minimal width is less than `min_width`
         patches_to_reinit_with_excess_lines = min_lines_width < min_width
-        patches_to_consider_to_reinit[patches_to_consider_to_reinit] = patches_to_consider_to_reinit[patches_to_consider_to_reinit].clone() & patches_to_reinit_with_excess_lines
-        patches_to_reinit[patches_to_reinit] = patches_to_reinit[patches_to_reinit].clone() & patches_to_reinit_with_excess_lines
-        if patches_to_reinit.sum() == 0:
+
+        # Update patches_to_reinit without in-place operations
+        patches_indices = patches_to_reinit.nonzero(as_tuple=True)[0]
+        valid_patches_indices = patches_indices[patches_to_reinit_with_excess_lines]
+
+        # Create a new tensor for patches_to_reinit
+        new_patches_to_reinit = torch.zeros_like(patches_to_reinit, dtype=torch.bool)
+        new_patches_to_reinit[valid_patches_indices] = True
+        patches_to_reinit = new_patches_to_reinit
+
+        if patches_to_reinit.sum().item() == 0:
             return
+
+        # 5. Reinitialize lines in selected patches
         lines_to_reinit = lines_to_reinit[patches_to_reinit_with_excess_lines]
-        # 5. In every such patch put the line with the minimal width from step 3
-        #    into the position maximum excess raster from step 1
-        #    and reinitialize the length and width of this line
-        cx.data[patches_to_reinit, lines_to_reinit] = raster_coordinates[
-            0, max_excess_id[patches_to_consider_to_reinit]]
-        cy.data[patches_to_reinit, lines_to_reinit] = raster_coordinates[
-            1, max_excess_id[patches_to_consider_to_reinit]]
+        max_excess_id_selected = max_excess_id[patches_to_reinit]
+
+        # Ensure that raster_coordinates is defined and has correct dimensions
+        # You need to define raster_coordinates before this function or pass it as an argument
+        # For example:
+        # raster_coordinates = torch.meshgrid(torch.arange(h), torch.arange(w))
+        # raster_coordinates = torch.stack(raster_coordinates).view(2, -1).to(cx.device)
+
+        cx.data[patches_to_reinit, lines_to_reinit] = raster_coordinates[0, max_excess_id_selected]
+        cy.data[patches_to_reinit, lines_to_reinit] = raster_coordinates[1, max_excess_id_selected]
         length.data[patches_to_reinit, lines_to_reinit] = initial_length
         width.data[patches_to_reinit, lines_to_reinit] = initial_width
+
+
+
 
 
 def snap_lines(cx, cy, theta, length, width, pos_optimizer, size_optimizer, width_threshold=1 / 4, coord_threshold=1.5,
