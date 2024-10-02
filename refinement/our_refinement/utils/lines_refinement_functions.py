@@ -844,8 +844,8 @@ def reinit_excess_lines(cx, cy, width, length, excess_raster, patches_to_conside
         #    and that need reinitialization
         #    -- only these patches will be reinitialized
         patches_to_reinit_with_excess_lines = min_lines_width < min_width
-        patches_to_consider_to_reinit[patches_to_consider_to_reinit] &= patches_to_reinit_with_excess_lines
-        patches_to_reinit[patches_to_reinit] &= patches_to_reinit_with_excess_lines
+        patches_to_consider_to_reinit[patches_to_consider_to_reinit] = patches_to_consider_to_reinit[patches_to_consider_to_reinit].clone() & patches_to_reinit_with_excess_lines
+        patches_to_reinit[patches_to_reinit] = patches_to_reinit[patches_to_reinit].clone() & patches_to_reinit_with_excess_lines
         if patches_to_reinit.sum() == 0:
             return
         lines_to_reinit = lines_to_reinit[patches_to_reinit_with_excess_lines]
